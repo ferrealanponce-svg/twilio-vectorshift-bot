@@ -1,85 +1,65 @@
 import express from "express";
 import bodyParser from "body-parser";
-import fetch from "node-fetch";            // usamos fetch ESM seguro en Render
+import fetch from "node-fetch";
 import twilio from "twilio";
 
 const app = express();
-app.use(bodyParser.urlencoded({ extended: false })); // Twilio manda x-www-form-urlencoded
+app.use(bodyParser.urlencoded({ extended: false }));
 
-const MessagingResponse = twilio.twiml.MessagingResponse;
+const PORT = process.env.PORT || 10000;
+const PIPELINE_ID = process.env.PIPELINE_ID;
+const VECTORSHIFT_API_KEY = process.env.VECTORSHIFT_API_KEY;
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 
-// Ping simple
-app.get("/", (_req, res) => {
-  res.status(200).send("Twilio x VectorShift bot OK");
-});
+const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// Webhook de WhatsApp
+// Endpoint para recibir mensajes de WhatsApp
 app.post("/webhook", async (req, res) => {
-  const incomingMsg = (req.body?.Body || "").toString().trim();
-  console.log("📩 Mensaje recibido de WhatsApp:", incomingMsg);
-  console.log("🔑 Vars -> has VS KEY:", !!process.env.VECTORSIFT_API_KEY, "has PIPELINE_ID:", !!process.env.PIPELINE_ID);
+  const incomingMsg = req.body.Body;
+  const from = req.body.From;
 
-  let botReply = "Lo siento, no entendí tu mensaje.";
+  console.log("Mensaje entrante:", incomingMsg);
+
+  let reply = "Lo siento, hubo un problema procesando tu mensaje 🙏.";
 
   try {
-    // Llamada a VectorShift: pipeline.run
-    const payload = {
-      pipeline_id: process.env.PIPELINE_ID,
-      inputs: { message: incomingMsg }
-    };
+    const response = await fetch(
+      `https://api.vectorshift.ai/pipeline/run/${PIPELINE_ID}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${VECTORSHIFT_API_KEY}`,
+        },
+        body: JSON.stringify({
+          input_data: { input_1: incomingMsg },
+        }),
+      }
+    );
 
-    const vsResp = await fetch("https://api.vectorshift.ai/pipeline/run", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.VECTORSIFT_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
+    const data = await response.json();
+    console.log("Respuesta VectorShift:", data);
 
-    // Lee como texto y luego intenta parsear JSON (para capturar errores tipo HTML / texto)
-    const raw = await vsResp.text();
-
-    let data;
-    try {
-      data = JSON.parse(raw);
-    } catch (e) {
-      console.error("❗ Respuesta NO-JSON de VectorShift:", raw);
-      throw new Error("VectorShift respondió en formato no-JSON (probable error de auth o pipeline)");
-    }
-
-    console.log("📨 Respuesta VectorShift (JSON):", JSON.stringify(data, null, 2));
-
-    // Extrae el texto de diferentes posibles formas
-    const candidates = [
-      data?.output_text,
-      data?.output?.text,
-      data?.outputs?.text,
-      data?.result?.[0]?.output_text,
-      data?.choices?.[0]?.message?.content, // por si fuera estilo chat.completions
-      data?.message?.content,
-      typeof data?.output === "string" ? data.output : null
-    ].filter(Boolean);
-
-    if (candidates.length > 0) {
-      botReply = String(candidates[0]).trim();
+    if (data && data.output && data.output.output_1) {
+      reply = data.output.output_1;
     } else {
-      botReply = "No recibí texto de VectorShift, pero la llamada se realizó correctamente.";
+      reply = "No encontré una respuesta en VectorShift, pero aquí estoy 😉.";
     }
-  } catch (err) {
-    console.error("❌ Error al consultar VectorShift:", err);
-    botReply = "Hubo un error con el servidor, inténtalo más tarde 🙏";
+  } catch (error) {
+    console.error("Error en fetch:", error);
   }
 
-  // Responder a Twilio con TwiML
-  const twiml = new MessagingResponse();
-  twiml.message(botReply);
+  // Responder por WhatsApp
+  await client.messages.create({
+    from: "whatsapp:+14155238886", // número de Twilio Sandbox
+    to: from,
+    body: reply,
+  });
 
-  res.type("text/xml").send(twiml.toString());
+  res.sendStatus(200);
 });
 
-// Puerto dinámico de Render
-const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`✅ Servidor corriendo en puerto ${PORT}`);
+  console.log(`Servidor corriendo en puerto ${PORT}`);
 });
