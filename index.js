@@ -1,64 +1,57 @@
-// index.js
-const express = require('express');
-const bodyParser = require('body-parser');
-const fetch = require('node-fetch');
+const express = require("express");
+const bodyParser = require("body-parser");
+const twilio = require("twilio");
+const fetch = require("node-fetch");
 
 const app = express();
-const PORT = process.env.PORT || 10000;
-
 app.use(bodyParser.urlencoded({ extended: false }));
 
-app.get('/', (_req, res) => {
-  res.send('OK ✅');
-});
+// Variables de entorno (Render → Environment)
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const vectorShiftApiKey = process.env.VECTORSHIFT_API_KEY;
+const pipelineId = process.env.PIPELINE_ID;
 
-app.post('/webhook', async (req, res) => {
-  const userText = (req.body && req.body.Body) ? String(req.body.Body) : '';
+const client = twilio(accountSid, authToken);
 
-  let reply = 'Hola 👋, soy tu bot de WhatsApp funcionando 🚀';
+// Webhook de Twilio
+app.post("/webhook", async (req, res) => {
+  const incomingMsg = req.body.Body;
+  const from = req.body.From;
 
-  const { VECTORSIFT_API_KEY } = process.env;
+  try {
+    // 1. Llamada al pipeline de VectorShift
+    const response = await fetch(`https://api.vectorshift.ai/v1/pipelines/${pipelineId}/run`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${vectorShiftApiKey}`
+      },
+      body: JSON.stringify({
+        input: { query: incomingMsg }
+      })
+    });
 
-  if (VECTORSIFT_API_KEY) {
-    try {
-      const VECTORSIFT_WEBHOOK_URL = "https://app.vectorshift.ai/api/v1/pipelines/68bce89d1d76fe15d037dd4b/run";
+    const data = await response.json();
+    const botReply = data.output || "Lo siento, no entendí tu mensaje.";
 
-      const vsRes = await fetch(VECTORSIFT_WEBHOOK_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': VECTORSIFT_API_KEY,
-        },
-        body: JSON.stringify({
-          inputs: { input_1: userText }
-        })
-      });
+    // 2. Enviar respuesta a WhatsApp
+    await client.messages.create({
+      from: "whatsapp:+14155238886", // Número de Sandbox de Twilio
+      to: from,
+      body: botReply
+    });
 
-      const data = await vsRes.json();
-
-      if (typeof data === 'string') {
-        reply = data;
-      } else if (data && data.output_1) {
-        reply = String(data.output_1);
-      } else if (data && data.response) {
-        reply = String(data.response);
-      }
-    } catch (err) {
-      console.error('Error llamando a VectorShift:', err);
-    }
+    res.status(200).send("OK");
+  } catch (error) {
+    console.error("Error en webhook:", error);
+    res.status(500).send("Error en el servidor");
   }
-
-  const twiml = `<Response><Message>${escapeXML(reply)}</Message></Response>`;
-  res.set('Content-Type', 'text/xml');
-  res.send(twiml);
 });
 
-function escapeXML(s = '') {
-  return s.replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
-}
-
+// Iniciar servidor
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
