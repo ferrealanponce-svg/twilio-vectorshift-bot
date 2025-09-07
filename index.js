@@ -1,63 +1,49 @@
 const express = require("express");
-const bodyParser = require("body-parser");
 const fetch = require("node-fetch");
+const twilio = require("twilio");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.use(express.urlencoded({ extended: false }));
 
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+// ⚙️ Tu Pipeline de VectorShift
+const PIPELINE_ID = "68bce89d1d76fe15d037dd4b";
+const VS_URL = `https://api.vectorshift.ai/v1/pipeline/${PIPELINE_ID}/run`;
 
-// Ruta de prueba
 app.get("/", (req, res) => {
-  res.send("✅ Bot funcionando en Render");
+  res.send("OK");
 });
 
-// Webhook de Twilio
 app.post("/webhook", async (req, res) => {
+  const incoming = (req.body.Body || "").toString().trim();
+  const twiml = new twilio.twiml.MessagingResponse();
+
   try {
-    const from = req.body.From || "desconocido";
-    const body = req.body.Body || "";
-
-    console.log("📩 Mensaje entrante:", from, body);
-
-    // Llamada a VectorShift
-    const vsResponse = await fetch("https://api.vectorshift.ai/v1/pipeline/68bce89d1d76e15d837dd4db/run", {
+    const r = await fetch(VS_URL, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.VS_API_KEY}`, // agrega tu API Key en Render
-        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.VECTORSHIFT_API_KEY}`,
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        inputs: [{ role: "user", content: body }],
-      }),
+        inputs: { input_1: incoming }
+      })
     });
 
-    const data = await vsResponse.json();
-    console.log("🤖 Respuesta de VectorShift:", data);
-
+    const data = await r.json();
     const reply =
-      data?.output?.[0]?.content || "⚠️ No entendí tu mensaje.";
+      (data && data.outputs && data.outputs.output_1) ||
+      "Lo siento, no entendí. Intenta reformular tu mensaje.";
 
-    // Respuesta en formato Twilio XML
-    res.set("Content-Type", "text/xml");
-    res.send(`
-      <Response>
-        <Message>${reply}</Message>
-      </Response>
-    `);
-  } catch (err) {
-    console.error("❌ Error en webhook:", err);
-    res.set("Content-Type", "text/xml");
-    res.send(`
-      <Response>
-        <Message>⚠️ Error procesando tu mensaje.</Message>
-      </Response>
-    `);
+    twiml.message(reply);
+  } catch (e) {
+    console.error("❌ Error VectorShift:", e);
+    twiml.message("Error temporal al procesar tu mensaje. Intenta de nuevo.");
   }
+
+  res.type("text/xml").send(twiml.toString());
 });
 
-// Iniciar servidor
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor escuchando en http://localhost:${PORT}`);
+  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
 });
