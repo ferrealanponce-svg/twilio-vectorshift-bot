@@ -1,6 +1,6 @@
 import express from "express";
 import bodyParser from "body-parser";
-import fetch from "node-fetch"; // necesario en Node 18 en Render
+import fetch from "node-fetch";
 import twilio from "twilio";
 
 const app = express();
@@ -22,12 +22,30 @@ app.post("/webhook", async (req, res) => {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini", // tu modelo en VectorShift
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: incomingMessage }]
       })
     });
 
     const data = await response.json();
-    console.log("📨 Respuesta completa de VectorShift:", JSON.stringify(data, null, 2));
+    console.log("📨 Respuesta completa de VectorShift:", data);
 
-    if (data && data.choices && data.choices.length > 0) {
+    if (data && data.choices && data.choices[0]?.message?.content) {
+      botReply = data.choices[0].message.content;
+    }
+
+  } catch (error) {
+    console.error("❌ Error al llamar a VectorShift:", error);
+  }
+
+  const twiml = new MessagingResponse();
+  twiml.message(botReply);
+
+  res.set("Content-Type", "text/xml");
+  res.send(twiml.toString());
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`✅ Servidor corriendo en puerto ${PORT}`);
+});
