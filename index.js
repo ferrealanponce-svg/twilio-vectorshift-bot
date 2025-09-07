@@ -1,26 +1,24 @@
 import express from "express";
 import bodyParser from "body-parser";
 import fetch from "node-fetch";
+import twilio from "twilio";
 
 const app = express();
-
-// Twilio envía x-www-form-urlencoded, y a veces JSON según config.
-// Soportamos ambos:
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 10000;
+const client = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
 
 app.post("/webhook", async (req, res) => {
+  const incomingMessage = req.body.Body;
+  const from = req.body.From;
+
+  console.log("📩 Mensaje entrante:", incomingMessage);
+
   try {
-    // Twilio usa Body/From en form-urlencoded
-    const incomingMessage =
-      req.body?.Body || req.body?.body || req.body?.message || "";
-    const from = req.body?.From || "";
-
-    console.log("📩 Mensaje entrante:", { from, text: incomingMessage });
-
-    // Llamada correcta a VectorShift Pipeline Run (¡con /v1!)
+    // Llamar a VectorShift con tu PIPELINE_ID y API_KEY
     const vsResp = await fetch(
       `https://api.vectorshift.ai/v1/pipeline/run/${process.env.PIPELINE_ID}`,
       {
@@ -31,7 +29,6 @@ app.post("/webhook", async (req, res) => {
         },
         body: JSON.stringify({
           input_data: {
-            // Debe coincidir con el nombre del nodo de entrada en tu pipeline
             input_1: incomingMessage,
           },
         }),
@@ -41,47 +38,22 @@ app.post("/webhook", async (req, res) => {
     const data = await vsResp.json();
     console.log("🤖 Respuesta VectorShift:", data);
 
-    // Extraer texto de la respuesta (cubrimos varios formatos posibles)
-    let reply =
-      data?.output_1 ||
-      data?.outputs?.output_1 ||
-      data?.outputs?.default ||
-      data?.message ||
-      data?.text ||
-      "";
+    const reply = data.output.output_1 || "Lo siento, no entendí tu mensaje.";
 
-    if (!reply) {
-      // Si VS respondió error (ej. 404 Not Found), muéstralo en logs y manda fallback al usuario
-      console.error("⚠️ VectorShift sin respuesta usable. Body:", data);
-      reply = "No encontré respuesta en VectorShift, pero aquí estoy 🙂.";
-    }
+    // Responder al usuario en WhatsApp
+    await client.messages.create({
+      body: reply,
+      from: "whatsapp:+14155238886", // número sandbox Twilio
+      to: from,
+    });
 
-    // Responder a Twilio (TwiML)
-    res.set("Content-Type", "text/xml");
-    res.send(`
-      <Response>
-        <Message>${escapeXml(reply)}</Message>
-      </Response>
-    `);
-  } catch (error) {
-    console.error("❌ Error en webhook:", error);
-    res.set("Content-Type", "text/xml");
-    res.send(`
-      <Response>
-        <Message>Hubo un error en el servidor 😢 Intenta de nuevo en un momento.</Message>
-      </Response>
-    `);
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("❌ Error:", err);
+    res.sendStatus(500);
   }
 });
 
-// util para evitar romper el XML
-function escapeXml(unsafe = "") {
-  return String(unsafe)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
-});
+  console.log(`🚀 Servidor corriendo en puerto ${
