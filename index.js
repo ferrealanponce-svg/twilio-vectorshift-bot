@@ -1,12 +1,14 @@
 const express = require("express");
 const bodyParser = require("body-parser");
-const fetch = require("node-fetch"); // aseguramos node-fetch v2
+const fetch = require("node-fetch");
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Ruta principal de prueba
+// Ruta de prueba
 app.get("/", (req, res) => {
   res.send("✅ Bot funcionando en Render");
 });
@@ -20,40 +22,42 @@ app.post("/webhook", async (req, res) => {
     console.log("📩 Mensaje entrante:", from, body);
 
     // Llamada a VectorShift
-    const vsResponse = await fetch("https://api.vectorshift.ai/v1/pipeline/68bce89d1d76fe15d037dd4b/run", {
+    const vsResponse = await fetch("https://api.vectorshift.ai/v1/pipeline/68bce89d1d76e15d837dd4db/run", {
       method: "POST",
       headers: {
-        "Authorization": "Bearer TU_API_KEY_DE_VECTORSHIFT",
+        "Authorization": `Bearer ${process.env.VS_API_KEY}`, // agrega tu API Key en Render
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        inputs: { input_1: body }
+        inputs: [{ role: "user", content: body }],
       }),
     });
 
     const data = await vsResponse.json();
-    console.log("📤 Respuesta de VectorShift:", data);
+    console.log("🤖 Respuesta de VectorShift:", data);
 
-    const reply = data.outputs?.output_1 || "Lo siento, no entendí tu mensaje.";
+    const reply =
+      data?.output?.[0]?.content || "⚠️ No entendí tu mensaje.";
 
-    // Twilio requiere respuesta en TwiML XML
-    const twiml = `
+    // Respuesta en formato Twilio XML
+    res.set("Content-Type", "text/xml");
+    res.send(`
       <Response>
         <Message>${reply}</Message>
       </Response>
-    `;
-
+    `);
+  } catch (err) {
+    console.error("❌ Error en webhook:", err);
     res.set("Content-Type", "text/xml");
-    res.send(twiml);
-
-  } catch (error) {
-    console.error("❌ Error en /webhook:", error);
-    res.status(500).send("Error interno");
+    res.send(`
+      <Response>
+        <Message>⚠️ Error procesando tu mensaje.</Message>
+      </Response>
+    `);
   }
 });
 
-// Puerto para Render
-const PORT = process.env.PORT || 10000;
+// Iniciar servidor
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+  console.log(`🚀 Servidor escuchando en http://localhost:${PORT}`);
 });
