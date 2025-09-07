@@ -1,8 +1,9 @@
-﻿{
-  "name": "mi-bot-twilio",
+{
+  "name": "twilio-vectorshift-bot",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Bot de WhatsApp con Twilio y Vectorshift",
   "type": "module",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
