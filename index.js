@@ -1,78 +1,57 @@
-import express from "express";
-import bodyParser from "body-parser";
-import fetch from "node-fetch";
-import dotenv from "dotenv";
-import twilio from "twilio";
-
-dotenv.config();
+const express = require("express");
+const bodyParser = require("body-parser");
+const fetch = require("node-fetch"); // usamos node-fetch v2
+const MessagingResponse = require("twilio").twiml.MessagingResponse;
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 3000;
+// Ruta webhook para Twilio
+app.post("/webhook", async (req, res) => {
+  const incomingMsg = req.body.Body; // mensaje de WhatsApp
+  console.log("Mensaje recibido:", incomingMsg);
 
-// Twilio config
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-
-// Memoria simple en memoria del servidor
-let conversationHistory = {};
-
-// Endpoint para recibir mensajes de WhatsApp
-app.post("/whatsapp", async (req, res) => {
   try {
-    const from = req.body.From; // número del usuario
-    const body = req.body.Body?.trim() || ""; // mensaje de usuario
-
-    if (!from || !body) {
-      return res.status(400).send("Invalid request");
-    }
-
-    // Inicializar historial si no existe
-    if (!conversationHistory[from]) {
-      conversationHistory[from] = [];
-    }
-
-    // Guardar mensaje del usuario en historial
-    conversationHistory[from].push({ role: "user", content: body });
-
-    // Enviar mensaje + historial a VectorShift
-    const response = await fetch(process.env.VECTORSHIFT_PIPELINE_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.VECTORSHIFT_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        input: body,
-        history: conversationHistory[from]
-      })
-    });
+    // Llamada a tu pipeline de Vectorshift
+    const response = await fetch(
+      "https://api.vectorshift.ai/v1/pipeline/68bce89d1d76fe15d037dd4b/run",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer sk_4euLIwMVubFS0iqZpPUELDChbHGLPaylsFurgc0CyLUqPXaR", // ⚠️ usa tu API key real
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          inputs: {
+            input_1: incomingMsg
+          }
+        })
+      }
+    );
 
     const data = await response.json();
+    console.log("Respuesta de Vectorshift:", data);
 
-    let reply = "Lo siento, no entendí.";
-    if (data && data.output) {
-      reply = data.output;
+    const twiml = new MessagingResponse();
+    if (data.outputs && data.outputs.output_1) {
+      twiml.message(data.outputs.output_1);
+    } else {
+      twiml.message("Lo siento, hubo un error procesando tu mensaje 🙏.");
     }
 
-    // Guardar respuesta del bot en historial
-    conversationHistory[from].push({ role: "assistant", content: reply });
-
-    // Responder al usuario por WhatsApp
-    await client.messages.create({
-      from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
-      to: from,
-      body: reply
-    });
-
-    res.send("OK");
-  } catch (err) {
-    console.error("Error:", err);
-    res.status(500).send("Server error");
+    res.writeHead(200, { "Content-Type": "text/xml" });
+    res.end(twiml.toString());
+  } catch (error) {
+    console.error("Error en webhook:", error);
+    const twiml = new MessagingResponse();
+    twiml.message("Ocurrió un error interno, inténtalo más tarde.");
+    res.writeHead(200, { "Content-Type": "text/xml" });
+    res.end(twiml.toString());
   }
 });
 
+// Render usa PORT de variable de entorno
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Servidor corriendo en puerto ${PORT}`);
 });
