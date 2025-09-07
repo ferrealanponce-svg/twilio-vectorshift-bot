@@ -1,60 +1,53 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const twilio = require("twilio");
-const fetch = require("node-fetch");
+import express from "express";
+import bodyParser from "body-parser";
+import fetch from "node-fetch"; // 👈 necesario en Node 18 en Render
+import twilio from "twilio";
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// Variables de entorno
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const vectorShiftApiKey = process.env.VECTORSHIFT_API_KEY;
-const pipelineId = process.env.PIPELINE_ID;
+const MessagingResponse = twilio.twiml.MessagingResponse;
 
-const client = twilio(accountSid, authToken);
-
-// Webhook de Twilio
 app.post("/webhook", async (req, res) => {
-  const incomingMsg = req.body.Body;
-  const from = req.body.From;
+  const incomingMessage = req.body.Body;
+  console.log("📩 Mensaje recibido de WhatsApp:", incomingMessage);
+
+  let botReply = "Lo siento, no entendí tu mensaje.";
 
   try {
-    // 1. Llamada al pipeline de VectorShift
-    const response = await fetch(
-      `https://api.vectorshift.ai/v1/pipelines/${pipelineId}/run`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${vectorShiftApiKey}`,
-        },
-        body: JSON.stringify({
-          input: { query: incomingMsg },
-        }),
-      }
-    );
-
-    const data = await response.json();
-    // Ajusta según la respuesta real del pipeline
-    const botReply =
-      data.output || data.results?.[0]?.output_text || "Lo siento, no entendí tu mensaje.";
-
-    // 2. Enviar respuesta a WhatsApp
-    await client.messages.create({
-      from: "whatsapp:+14155238886", // Número de Sandbox de Twilio
-      to: from,
-      body: botReply,
+    const response = await fetch("https://api.vectorshift.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.VECTORSHIFT_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini", // tu modelo en VectorShift
+        messages: [{ role: "user", content: incomingMessage }]
+      })
     });
 
-    res.status(200).send("OK");
+    const data = await response.json();
+    console.log("📨 Respuesta completa de VectorShift:", data);
+
+    // Ajusta según el formato real que mande VectorShift
+    if (data && data.choices && data.choices[0]?.message?.content) {
+      botReply = data.choices[0].message.content;
+    }
+
   } catch (error) {
-    console.error("Error en webhook:", error);
-    res.status(500).send("Error en el servidor");
+    console.error("❌ Error al llamar a VectorShift:", error);
   }
+
+  const twiml = new MessagingResponse();
+  twiml.message(botReply);
+
+  res.set("Content-Type", "text/xml");
+  res.send(twiml.toString());
 });
 
+// Puerto dinámico de Render
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
+  console.log(`✅ Servidor corriendo en puerto ${PORT}`);
 });
