@@ -6,7 +6,7 @@ const fetch = require("node-fetch");
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// Variables de entorno (Render → Environment)
+// Variables de entorno
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const vectorShiftApiKey = process.env.VECTORSHIFT_API_KEY;
@@ -21,25 +21,30 @@ app.post("/webhook", async (req, res) => {
 
   try {
     // 1. Llamada al pipeline de VectorShift
-    const response = await fetch(`https://api.vectorshift.ai/v1/pipelines/${pipelineId}/run`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${vectorShiftApiKey}`
-      },
-      body: JSON.stringify({
-        input: { query: incomingMsg }
-      })
-    });
+    const response = await fetch(
+      `https://api.vectorshift.ai/v1/pipelines/${pipelineId}/run`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${vectorShiftApiKey}`,
+        },
+        body: JSON.stringify({
+          input: { query: incomingMsg },
+        }),
+      }
+    );
 
     const data = await response.json();
-    const botReply = data.output || "Lo siento, no entendí tu mensaje.";
+    // Ajusta según la respuesta real del pipeline
+    const botReply =
+      data.output || data.results?.[0]?.output_text || "Lo siento, no entendí tu mensaje.";
 
     // 2. Enviar respuesta a WhatsApp
     await client.messages.create({
       from: "whatsapp:+14155238886", // Número de Sandbox de Twilio
       to: from,
-      body: botReply
+      body: botReply,
     });
 
     res.status(200).send("OK");
@@ -49,9 +54,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// Iniciar servidor
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
-
