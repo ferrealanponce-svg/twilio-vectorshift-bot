@@ -38,7 +38,7 @@ app.post("/webhook", async (req, res) => {
     const data = await vsResp.json();
     console.log("🤖 Respuesta VectorShift:", data);
 
-    const reply = data.output.output_1 || "Lo siento, no entendí tu mensaje.";
+    const reply = data.output?.output_1 || "Lo siento, no entendí tu mensaje.";
 
     // Responder al usuario en WhatsApp
     await client.messages.create({
@@ -56,4 +56,5 @@ app.post("/webhook", async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en puerto ${
+  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+});
