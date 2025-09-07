@@ -1,66 +1,78 @@
 import express from "express";
 import bodyParser from "body-parser";
 import fetch from "node-fetch";
+import dotenv from "dotenv";
+import twilio from "twilio";
+
+dotenv.config();
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
 
-// 🧠 Memoria simple en RAM
-let memory = {}; // { "whatsapp:+521234...": ["(user) Hola", "(bot) Hola!"] }
+const PORT = process.env.PORT || 3000;
 
-// 🔑 Variables de entorno (agregar en Render → Environment)
-const VECTORSHIFT_API_KEY = process.env.VECTORSHIFT_API_KEY;
-const PIPELINE_ID = process.env.PIPELINE_ID;
+// Twilio config
+const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// 📩 Ruta de Twilio WhatsApp
+// Memoria simple en memoria del servidor
+let conversationHistory = {};
+
+// Endpoint para recibir mensajes de WhatsApp
 app.post("/whatsapp", async (req, res) => {
   try {
-    const from = req.body.From;
-    const body = req.body.Body;
+    const from = req.body.From; // número del usuario
+    const body = req.body.Body?.trim() || ""; // mensaje de usuario
 
-    // Inicializa memoria si no existe
-    if (!memory[from]) memory[from] = [];
-    memory[from].push(`(user) ${body}`);
+    if (!from || !body) {
+      return res.status(400).send("Invalid request");
+    }
 
-    // 🚀 Llamada a pipeline de Vectorshift
-    const response = await fetch(`https://api.vectorshift.ai/v1/pipelines/${PIPELINE_ID}/run`, {
+    // Inicializar historial si no existe
+    if (!conversationHistory[from]) {
+      conversationHistory[from] = [];
+    }
+
+    // Guardar mensaje del usuario en historial
+    conversationHistory[from].push({ role: "user", content: body });
+
+    // Enviar mensaje + historial a VectorShift
+    const response = await fetch(process.env.VECTORSHIFT_PIPELINE_URL, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${VECTORSHIFT_API_KEY}`,
+        "Authorization": `Bearer ${process.env.VECTORSHIFT_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        input_data: {
-          input_1: body, // ⚡️ nombre exacto de tu "Input" en el pipeline
-          history: memory[from].join("\n") // historial completo
-        }
+        input: body,
+        history: conversationHistory[from]
       })
     });
 
     const data = await response.json();
-    const reply = data.output?.output_1 || "Disculpa, no entendí 🫤";
 
-    // Guarda la respuesta en la memoria
-    memory[from].push(`(bot) ${reply}`);
+    let reply = "Lo siento, no entendí.";
+    if (data && data.output) {
+      reply = data.output;
+    }
 
-    // 📤 Respuesta XML para Twilio
-    res.set("Content-Type", "text/xml");
-    res.send(`
-      <Response>
-        <Message>${reply}</Message>
-      </Message>
-    `);
+    // Guardar respuesta del bot en historial
+    conversationHistory[from].push({ role: "assistant", content: reply });
+
+    // Responder al usuario por WhatsApp
+    await client.messages.create({
+      from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
+      to: from,
+      body: reply
+    });
+
+    res.send("OK");
   } catch (err) {
-    console.error("❌ Error en /whatsapp:", err);
-    res.set("Content-Type", "text/xml");
-    res.send(`
-      <Response>
-        <Message>Hubo un error en el servidor 🚨</Message>
-      </Response>
-    `);
+    console.error("Error:", err);
+    res.status(500).send("Server error");
   }
 });
 
-// 🌍 Render usa PORT automáticamente
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`✅ Servidor corriendo en puerto ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
