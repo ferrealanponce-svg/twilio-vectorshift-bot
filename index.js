@@ -1,56 +1,60 @@
 import express from "express";
 import bodyParser from "body-parser";
 import fetch from "node-fetch";
-import twilio from "twilio";
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-const client = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
+// 👇 TUS DATOS (NO CAMBIAR el ID; la API key va en Render)
+const PIPELINE_ID = "68bce89d1d76fe15d037dd4b";
+const VKEY = process.env.VECTORSIFT_API_KEY;
+
+// Pequeño helper para evitar caracteres que rompan el XML de Twilio
+function xmlEscape(str = "") {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+app.get("/", (_req, res) => {
+  res.type("text/plain").send("OK");
+});
 
 app.post("/webhook", async (req, res) => {
-  const incomingMessage = req.body.Body;
-  const from = req.body.From;
-
-  console.log("📩 Mensaje entrante:", incomingMessage);
-
   try {
-    // Llamar a VectorShift con tu PIPELINE_ID y API_KEY
-    const vsResp = await fetch(
-      `https://api.vectorshift.ai/v1/pipeline/run/${process.env.PIPELINE_ID}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.VECTORSHIFT_API_KEY}`,
-        },
-        body: JSON.stringify({
-          input_data: {
-            input_1: incomingMessage,
-          },
-        }),
-      }
-    );
+    const incoming = req.body?.Body || "";
+    console.log("📩 Mensaje entrante:", incoming);
 
-    const data = await vsResp.json();
-    console.log("🤖 Respuesta VectorShift:", data);
-
-    const reply = data.output?.output_1 || "Lo siento, no entendí tu mensaje.";
-
-    // Responder al usuario en WhatsApp
-    await client.messages.create({
-      body: reply,
-      from: "whatsapp:+14155238886", // número sandbox Twilio
-      to: from,
+    // Llamada correcta al pipeline (YA PROBADA)
+    const vs = await fetch(`https://api.vectorshift.ai/v1/pipeline/${PIPELINE_ID}/run`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${VKEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        inputs: { input_1: incoming },
+      }),
     });
 
-    res.sendStatus(200);
+    const data = await vs.json();
+    console.log("🤖 VectorShift respondió:", data);
+
+    // Lee la salida (tu pipeline devuelve outputs.output_1)
+    const reply =
+      (data && data.outputs && (data.outputs.output_1 ?? data.outputs.output)) ||
+      "Gracias por tu mensaje. Te responderemos en breve.";
+
+    // Respuesta directa a Twilio con TwiML (no hace falta SDK)
+    res.type("text/xml").send(
+      `<Response><Message>${xmlEscape(String(reply)).slice(0,1600)}</Message></Response>`
+    );
   } catch (err) {
-    console.error("❌ Error:", err);
-    res.sendStatus(500);
+    console.error("❌ Error webhook:", err);
+    res.type("text/xml").send(
+      `<Response><Message>Ocurrió un error temporal. Intenta de nuevo.</Message></Response>`
+    );
   }
 });
 
